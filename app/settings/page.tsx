@@ -9,6 +9,8 @@ export default function SettingsPage() {
     github_solutions_path: getSetting("github_solutions_path") ?? "solutions",
     github_pat_configured: !!getSetting("github_pat"),
     anthropic_api_key_configured: !!getSetting("anthropic_api_key"),
+    leetcode_session_configured: !!getSetting("leetcode_session"),
+    autopush_on_accept: getSetting("autopush_on_accept") === "true",
   };
 
   return (

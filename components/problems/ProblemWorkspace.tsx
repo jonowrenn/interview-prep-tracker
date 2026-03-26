@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import CodeEditor from "@/components/editor/CodeEditor";
-import LanguageSelector, { LANGUAGES } from "@/components/editor/LanguageSelector";
+import LanguageSelector from "@/components/editor/LanguageSelector";
 import NotesEditor from "@/components/notes/NotesEditor";
 import DifficultyBadge from "@/components/ui/DifficultyBadge";
 import StatusIcon from "@/components/ui/StatusIcon";
@@ -17,12 +17,29 @@ type Problem = {
   title: string;
   difficulty: string;
   description: string | null;
+  descriptionCached: boolean;
   tags: string[];
   status: string;
   notes: string;
   solutions: Array<{ language: string; code: string }>;
   codeSnippets: CodeSnippet[];
   review: { next_review: number; interval_days: number } | null;
+};
+
+type SubmissionResult = {
+  state: string;
+  status_msg?: string;
+  status_code?: number;
+  runtime?: string;
+  memory?: string;
+  runtime_percentile?: number;
+  memory_percentile?: number;
+  total_correct?: number;
+  total_testcases?: number;
+  compile_error?: string;
+  full_runtime_error?: string;
+  accepted?: boolean;
+  autopushStatus?: string;
 };
 
 const STARTER: Record<string, string> = {
@@ -40,6 +57,16 @@ function getStarter(langSlug: string, snippets: CodeSnippet[]): string {
   return snippet?.code ?? STARTER[langSlug] ?? "// Start coding here\n";
 }
 
+const STATUS_COLORS: Record<number, string> = {
+  10: "text-green-400 bg-green-400/10 border-green-700",   // Accepted
+  11: "text-red-400 bg-red-400/10 border-red-700",          // Wrong Answer
+  12: "text-red-400 bg-red-400/10 border-red-700",          // Memory Limit
+  13: "text-red-400 bg-red-400/10 border-red-700",          // Output Limit
+  14: "text-yellow-400 bg-yellow-400/10 border-yellow-700", // TLE
+  15: "text-orange-400 bg-orange-400/10 border-orange-700", // Runtime Error
+  20: "text-orange-400 bg-orange-400/10 border-orange-700", // Compile Error
+};
+
 export default function ProblemWorkspace({ problem }: { problem: Problem }) {
   const [tab, setTab] = useState<"description" | "notes">("description");
   const [chatOpen, setChatOpen] = useState(false);
@@ -56,9 +83,39 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
   const [notes, setNotes] = useState(problem.notes ?? "");
   const [status, setStatus] = useState(problem.status);
   const [saving, setSaving] = useState(false);
-  const [leftWidth, setLeftWidth] = useState(50); // percentage
+
+  // Description lazy loading
+  const [description, setDescription] = useState<string | null>(problem.description);
+  const [codeSnippets, setCodeSnippets] = useState<CodeSnippet[]>(problem.codeSnippets ?? []);
+  const [descLoading, setDescLoading] = useState(!problem.descriptionCached);
+
+  // Submission state
+  const [submitting, setSubmitting] = useState(false);
+  const [submitResult, setSubmitResult] = useState<SubmissionResult | null>(null);
+  const [pushing, setPushing] = useState(false);
+
+  const [leftWidth, setLeftWidth] = useState(50);
   const dragging = useRef(false);
   const container = useRef<HTMLDivElement>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Lazy-load description
+  useEffect(() => {
+    if (problem.descriptionCached && problem.description) {
+      setDescription(problem.description);
+      setDescLoading(false);
+      return;
+    }
+    setDescLoading(true);
+    fetch(`/api/problems/${problem.slug}/description`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.description) setDescription(data.description);
+        if (data.codeSnippets?.length) setCodeSnippets(data.codeSnippets);
+      })
+      .catch(() => {/* ignore */})
+      .finally(() => setDescLoading(false));
+  }, [problem.slug, problem.descriptionCached, problem.description]);
 
   // Auto-save draft
   useEffect(() => {
@@ -80,6 +137,10 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
     return () => clearTimeout(t);
   }, [notes, problem.slug]);
 
+  useEffect(() => {
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, []);
+
   const handleLanguageChange = (lang: string) => {
     setLanguage(lang);
     const saved = problem.solutions.find((s) => s.language === lang);
@@ -87,11 +148,11 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
       setCode(saved.code);
     } else {
       const draft = typeof window !== "undefined" ? localStorage.getItem(`draft-${problem.slug}-${lang}`) : null;
-      setCode(draft ?? getStarter(lang, problem.codeSnippets));
+      setCode(draft ?? getStarter(lang, codeSnippets));
     }
   };
 
-  const handleSubmit = async () => {
+  const handleSave = async () => {
     setSaving(true);
     try {
       const res = await fetch(`/api/solutions/${problem.slug}`, {
@@ -101,20 +162,92 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
       });
       const data = await res.json();
       setStatus("solved");
-
-      if (data.pushStatus === "success") {
-        showToast("Solution saved and pushed to GitHub!", "success");
-      } else if (data.pushStatus === "not_configured") {
-        showToast("Solution saved. Configure GitHub in Settings to auto-push.", "info");
-      } else if (data.pushStatus === "failed") {
-        showToast(`Solution saved. GitHub push failed: ${data.pushError}`, "error");
-      } else {
-        showToast("Solution saved!", "success");
-      }
+      if (data.pushStatus === "success") showToast("Saved and pushed to GitHub!", "success");
+      else if (data.pushStatus === "not_configured") showToast("Saved. Configure GitHub in Settings to push.", "info");
+      else showToast("Saved!", "success");
     } catch {
-      showToast("Failed to save solution.", "error");
+      showToast("Failed to save.", "error");
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    setSubmitting(true);
+    setSubmitResult(null);
+
+    // Save to DB first so auto-push has the code
+    await fetch(`/api/solutions/${problem.slug}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ language, code }),
+    });
+
+    try {
+      const res = await fetch(`/api/submit/${problem.slug}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ language, code }),
+      });
+      const data = await res.json();
+
+      if (!res.ok) {
+        showToast(data.error ?? "Submission failed.", "error");
+        setSubmitting(false);
+        return;
+      }
+
+      const { submissionId } = data;
+
+      // Poll for result
+      let attempts = 0;
+      pollRef.current = setInterval(async () => {
+        attempts++;
+        if (attempts > 30) {
+          clearInterval(pollRef.current!);
+          setSubmitting(false);
+          showToast("Timed out waiting for result.", "error");
+          return;
+        }
+
+        const checkRes = await fetch(`/api/submit/${problem.slug}/check/${submissionId}?language=${language}`);
+        const result: SubmissionResult = await checkRes.json();
+
+        if (result.state === "SUCCESS" || result.state === "FAILED") {
+          clearInterval(pollRef.current!);
+          setSubmitting(false);
+          setSubmitResult(result);
+
+          if (result.accepted) {
+            setStatus("solved");
+            if (result.autopushStatus === "success") {
+              showToast("Accepted! Solution auto-pushed to GitHub.", "success");
+            } else {
+              showToast("Accepted!", "success");
+            }
+          }
+        }
+      }, 2000);
+    } catch {
+      showToast("Submission error.", "error");
+      setSubmitting(false);
+    }
+  };
+
+  const handlePushToGithub = async () => {
+    setPushing(true);
+    try {
+      const res = await fetch(`/api/solutions/${problem.slug}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ language, code }),
+      });
+      const data = await res.json();
+      if (data.pushStatus === "success") showToast("Pushed to GitHub!", "success");
+      else if (data.pushStatus === "not_configured") showToast("Configure GitHub in Settings first.", "info");
+      else showToast(`Push failed: ${data.pushError}`, "error");
+    } finally {
+      setPushing(false);
     }
   };
 
@@ -135,7 +268,7 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
       body: JSON.stringify({ quality }),
     });
     const data = await res.json();
-    showToast(`Review logged. Next review in ${data.intervalDays} day(s).`, "success");
+    showToast(`Review logged. Next in ${data.intervalDays} day(s).`, "success");
   };
 
   // Drag to resize
@@ -159,39 +292,25 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
   return (
     <div className="flex flex-col h-screen">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800 bg-zinc-900 shrink-0">
-        <div className="flex items-center gap-3">
-          <span className="text-zinc-500 text-sm">#{problem.id}</span>
-          <h1 className="text-white font-semibold">{problem.title}</h1>
+      <div className="flex items-center justify-between px-4 py-2.5 border-b border-zinc-800 bg-zinc-900 shrink-0 gap-2 flex-wrap">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="text-zinc-500 text-sm shrink-0">#{problem.id}</span>
+          <h1 className="text-white font-semibold truncate">{problem.title}</h1>
           <DifficultyBadge difficulty={problem.difficulty} />
           <StatusIcon status={status} />
-          <div className="flex gap-1 flex-wrap">
-            {problem.tags.slice(0, 4).map((tag) => (
-              <span key={tag} className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-full">{tag}</span>
-            ))}
-          </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
           {status !== "attempted" && status !== "solved" && (
-            <button
-              onClick={handleMarkAttempted}
-              className="text-sm px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors"
-            >
-              Mark Attempted
+            <button onClick={handleMarkAttempted} className="text-sm px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors">
+              Attempted
             </button>
           )}
           {problem.review && (
             <div className="flex items-center gap-1">
-              <span className="text-xs text-zinc-500 mr-1">Review:</span>
+              <span className="text-xs text-zinc-500">Review:</span>
               {(["hard", "good", "easy"] as const).map((q) => (
-                <button
-                  key={q}
-                  onClick={() => handleReview(q)}
-                  className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 capitalize transition-colors"
-                >
-                  {q}
-                </button>
+                <button key={q} onClick={() => handleReview(q)} className="text-xs px-2 py-1 rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 capitalize transition-colors">{q}</button>
               ))}
             </div>
           )}
@@ -202,45 +321,92 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
           >
             🤖 AI Tutor
           </button>
-          <button
-            onClick={handleSubmit}
-            disabled={saving}
-            className="text-sm px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors disabled:opacity-50"
-          >
-            {saving ? "Saving..." : "Save & Push"}
+          <button onClick={handleSave} disabled={saving} className="text-sm px-3 py-1.5 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-zinc-200 transition-colors disabled:opacity-50">
+            {saving ? "Saving..." : "Save"}
+          </button>
+          <button onClick={handleSubmit} disabled={submitting} className="text-sm px-4 py-1.5 rounded-lg bg-green-700 hover:bg-green-600 text-white font-medium transition-colors disabled:opacity-50">
+            {submitting ? "Submitting..." : "Submit"}
           </button>
         </div>
       </div>
+
+      {/* Submission result bar */}
+      {submitResult && submitResult.state === "SUCCESS" && (
+        <div className={`px-4 py-2.5 border-b flex items-center justify-between gap-4 flex-wrap shrink-0 ${STATUS_COLORS[submitResult.status_code ?? 0] ?? "text-zinc-300 bg-zinc-800/50 border-zinc-700"} border`}>
+          <div className="flex items-center gap-4 flex-wrap text-sm">
+            <span className="font-semibold">{submitResult.status_msg}</span>
+            {submitResult.status_code === 10 && (
+              <>
+                {submitResult.runtime && (
+                  <span className="text-xs opacity-80">
+                    Runtime: <strong>{submitResult.runtime}</strong>
+                    {submitResult.runtime_percentile != null && ` — beats ${submitResult.runtime_percentile.toFixed(1)}%`}
+                  </span>
+                )}
+                {submitResult.memory && (
+                  <span className="text-xs opacity-80">
+                    Memory: <strong>{submitResult.memory}</strong>
+                    {submitResult.memory_percentile != null && ` — beats ${submitResult.memory_percentile.toFixed(1)}%`}
+                  </span>
+                )}
+              </>
+            )}
+            {submitResult.total_testcases != null && submitResult.status_code !== 10 && (
+              <span className="text-xs opacity-80">
+                {submitResult.total_correct}/{submitResult.total_testcases} test cases passed
+              </span>
+            )}
+            {submitResult.compile_error && (
+              <span className="text-xs opacity-80 truncate max-w-xs">{submitResult.compile_error}</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            {submitResult.accepted && submitResult.autopushStatus !== "success" && (
+              <button
+                onClick={handlePushToGithub}
+                disabled={pushing}
+                className="text-xs px-3 py-1.5 bg-white/10 hover:bg-white/20 rounded-lg transition-colors border border-white/20 font-medium"
+              >
+                {pushing ? "Pushing..." : "Push to GitHub"}
+              </button>
+            )}
+            {submitResult.accepted && submitResult.autopushStatus === "success" && (
+              <span className="text-xs opacity-70">✓ Pushed to GitHub</span>
+            )}
+            <button onClick={() => setSubmitResult(null)} className="text-xs opacity-50 hover:opacity-100 transition-opacity">✕</button>
+          </div>
+        </div>
+      )}
 
       {/* Split pane */}
       <div ref={container} className="flex flex-1 overflow-hidden">
         {/* Left pane */}
         <div className="flex flex-col overflow-hidden" style={{ width: `${leftWidth}%` }}>
-          {/* Tabs */}
           <div className="flex border-b border-zinc-800 bg-zinc-900 shrink-0">
             {(["description", "notes"] as const).map((t) => (
               <button
                 key={t}
                 onClick={() => setTab(t)}
-                className={`px-4 py-2 text-sm capitalize transition-colors ${
-                  tab === t
-                    ? "text-white border-b-2 border-blue-500"
-                    : "text-zinc-500 hover:text-zinc-300"
-                }`}
+                className={`px-4 py-2 text-sm capitalize transition-colors ${tab === t ? "text-white border-b-2 border-blue-500" : "text-zinc-500 hover:text-zinc-300"}`}
               >
                 {t}
               </button>
             ))}
           </div>
-
           <div className="flex-1 overflow-auto">
             {tab === "description" ? (
-              <div
-                className="p-4 prose prose-invert prose-sm max-w-none"
-                dangerouslySetInnerHTML={{
-                  __html: problem.description ?? "<p class='text-zinc-500'>Loading description...</p>",
-                }}
-              />
+              descLoading ? (
+                <div className="p-4 space-y-3 animate-pulse">
+                  {[...Array(6)].map((_, i) => (
+                    <div key={i} className={`h-3 bg-zinc-800 rounded ${i % 3 === 0 ? "w-3/4" : i % 2 === 0 ? "w-full" : "w-5/6"}`} />
+                  ))}
+                </div>
+              ) : (
+                <div
+                  className="p-4 prose prose-invert prose-sm max-w-none"
+                  dangerouslySetInnerHTML={{ __html: description ?? "<p class='text-zinc-500'>Could not load description.</p>" }}
+                />
+              )
             ) : (
               <NotesEditor value={notes} onChange={setNotes} />
             )}
@@ -248,28 +414,18 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
         </div>
 
         {/* Drag handle */}
-        <div
-          onMouseDown={onMouseDown}
-          className="w-1 bg-zinc-800 hover:bg-blue-600 cursor-col-resize transition-colors shrink-0"
-        />
+        <div onMouseDown={onMouseDown} className="w-1 bg-zinc-800 hover:bg-blue-600 cursor-col-resize transition-colors shrink-0" />
 
-        {/* Right pane - Editor + optional chat */}
+        {/* Right pane */}
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          <div className={`${chatOpen ? "h-[55%]" : "flex-1"} overflow-hidden transition-all`}>
+          <div className={`${chatOpen ? "h-[55%]" : "flex-1"} overflow-hidden`}>
             <CodeEditor value={code} language={language} onChange={setCode} />
           </div>
           {chatOpen && (
             <>
               <div className="h-px bg-zinc-800 shrink-0" />
               <div className="flex-1 overflow-hidden">
-                <InlineChat
-                  problemContext={{
-                    title: problem.title,
-                    difficulty: problem.difficulty,
-                    description: problem.description ?? undefined,
-                    slug: problem.slug,
-                  }}
-                />
+                <InlineChat problemContext={{ title: problem.title, difficulty: problem.difficulty, description: description ?? undefined, slug: problem.slug }} />
               </div>
             </>
           )}
