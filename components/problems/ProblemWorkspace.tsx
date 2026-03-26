@@ -7,6 +7,7 @@ import NotesEditor from "@/components/notes/NotesEditor";
 import DifficultyBadge from "@/components/ui/DifficultyBadge";
 import StatusIcon from "@/components/ui/StatusIcon";
 import { showToast } from "@/components/ui/Toast";
+import InlineChat from "@/components/chat/InlineChat";
 
 type CodeSnippet = { lang: string; langSlug: string; code: string };
 
@@ -41,6 +42,7 @@ function getStarter(langSlug: string, snippets: CodeSnippet[]): string {
 
 export default function ProblemWorkspace({ problem }: { problem: Problem }) {
   const [tab, setTab] = useState<"description" | "notes">("description");
+  const [chatOpen, setChatOpen] = useState(false);
   const [language, setLanguage] = useState("javascript");
   const [code, setCode] = useState(() => {
     const saved = problem.solutions.find((s) => s.language === "javascript");
@@ -195,6 +197,12 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
           )}
           <LanguageSelector value={language} onChange={handleLanguageChange} />
           <button
+            onClick={() => setChatOpen((o) => !o)}
+            className={`text-sm px-3 py-1.5 rounded-lg transition-colors ${chatOpen ? "bg-purple-700 text-white" : "bg-zinc-800 hover:bg-zinc-700 text-zinc-300"}`}
+          >
+            🤖 AI Tutor
+          </button>
+          <button
             onClick={handleSubmit}
             disabled={saving}
             className="text-sm px-4 py-1.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white font-medium transition-colors disabled:opacity-50"
@@ -245,9 +253,26 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
           className="w-1 bg-zinc-800 hover:bg-blue-600 cursor-col-resize transition-colors shrink-0"
         />
 
-        {/* Right pane - Editor */}
-        <div className="flex-1 overflow-hidden">
-          <CodeEditor value={code} language={language} onChange={setCode} />
+        {/* Right pane - Editor + optional chat */}
+        <div className="flex-1 flex flex-col overflow-hidden min-w-0">
+          <div className={`${chatOpen ? "h-[55%]" : "flex-1"} overflow-hidden transition-all`}>
+            <CodeEditor value={code} language={language} onChange={setCode} />
+          </div>
+          {chatOpen && (
+            <>
+              <div className="h-px bg-zinc-800 shrink-0" />
+              <div className="flex-1 overflow-hidden">
+                <InlineChat
+                  problemContext={{
+                    title: problem.title,
+                    difficulty: problem.difficulty,
+                    description: problem.description ?? undefined,
+                    slug: problem.slug,
+                  }}
+                />
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>

@@ -4,6 +4,7 @@ import ProblemFilters from "@/components/problems/ProblemFilters";
 import ProblemSearch from "@/components/problems/ProblemSearch";
 import { getDb, getSetting } from "@/lib/db";
 import { redirect } from "next/navigation";
+import Link from "next/link";
 
 type SearchParams = Promise<{ q?: string; difficulty?: string; tag?: string; status?: string; page?: string; limit?: string }>;
 
@@ -75,7 +76,17 @@ export default async function ProblemsPage({ searchParams }: { searchParams: Sea
   return (
     <div className="p-6 max-w-6xl mx-auto space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-3">
-        <h1 className="text-2xl font-bold text-white">Problems</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-2xl font-bold text-white">Problems</h1>
+          {params.tag && (
+            <div className="flex items-center gap-2">
+              <span className="text-sm bg-blue-600/20 text-blue-300 border border-blue-700 px-3 py-1 rounded-full">
+                {params.tag.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}
+              </span>
+              <Link href="/problems" className="text-zinc-500 hover:text-zinc-300 text-sm transition-colors">✕ Clear</Link>
+            </div>
+          )}
+        </div>
         <div className="flex items-center gap-3 flex-wrap">
           <Suspense>
             <ProblemSearch />

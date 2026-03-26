@@ -14,7 +14,7 @@ export async function GET() {
 export async function PUT(req: NextRequest) {
   const body = await req.json() as Record<string, string>;
 
-  const allowed = ["github_pat", "github_owner", "github_repo", "github_branch", "github_solutions_path"];
+  const allowed = ["github_pat", "github_owner", "github_repo", "github_branch", "github_solutions_path", "anthropic_api_key"];
   for (const key of allowed) {
     if (body[key] !== undefined) {
       setSetting(key, body[key]);

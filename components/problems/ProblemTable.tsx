@@ -78,9 +78,14 @@ export default function ProblemTable({
                 <td className="px-4 py-3 hidden lg:table-cell">
                   <div className="flex flex-wrap gap-1">
                     {p.tags.slice(0, 3).map((tag) => (
-                      <span key={tag} className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-full">
+                      <Link
+                        key={tag}
+                        href={`/problems?tag=${encodeURIComponent(tag)}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-full hover:bg-zinc-700 hover:text-zinc-200 transition-colors"
+                      >
                         {tag}
-                      </span>
+                      </Link>
                     ))}
                     {p.tags.length > 3 && (
                       <span className="text-xs text-zinc-600">+{p.tags.length - 3}</span>

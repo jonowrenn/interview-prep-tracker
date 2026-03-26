@@ -10,6 +10,7 @@ type Props = {
     github_branch: string;
     github_solutions_path: string;
     github_pat_configured: boolean;
+    anthropic_api_key_configured: boolean;
   };
 };
 
@@ -18,6 +19,7 @@ export default function SettingsForm({ settings }: Props) {
     github_owner: settings.github_owner,
     github_repo: settings.github_repo,
     github_branch: settings.github_branch,
+    anthropic_api_key: "",
     github_solutions_path: settings.github_solutions_path,
     github_pat: "",
   });
@@ -35,6 +37,7 @@ export default function SettingsForm({ settings }: Props) {
         github_solutions_path: form.github_solutions_path,
       };
       if (form.github_pat) body.github_pat = form.github_pat;
+      if (form.anthropic_api_key) body.anthropic_api_key = form.anthropic_api_key;
 
       const res = await fetch("/api/settings", {
         method: "PUT",
@@ -44,7 +47,7 @@ export default function SettingsForm({ settings }: Props) {
 
       if (res.ok) {
         showToast("Settings saved!", "success");
-        setForm((f) => ({ ...f, github_pat: "" }));
+        setForm((f) => ({ ...f, github_pat: "", anthropic_api_key: "" }));
       } else {
         showToast("Failed to save settings.", "error");
       }
@@ -87,6 +90,31 @@ export default function SettingsForm({ settings }: Props) {
           />
           <p className="text-zinc-600 text-xs mt-1">
             Needs <code className="bg-zinc-800 px-1 rounded">repo</code> scope. Stored locally in SQLite, never sent anywhere.
+          </p>
+        </div>
+      </section>
+
+      <section className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 space-y-4">
+        <h2 className="text-white font-semibold">AI Tutor</h2>
+        <p className="text-zinc-400 text-sm">
+          Enables the AI Tutor chat panel on problem pages — ask for hints, explanations, and solutions powered by Claude.
+        </p>
+        <div>
+          <label className="block text-sm text-zinc-400 mb-1.5">
+            Anthropic API Key{" "}
+            {settings.anthropic_api_key_configured && (
+              <span className="text-green-400 text-xs">(configured)</span>
+            )}
+          </label>
+          <input
+            type="password"
+            value={form.anthropic_api_key}
+            onChange={(e) => update("anthropic_api_key", e.target.value)}
+            placeholder={settings.anthropic_api_key_configured ? "Leave blank to keep existing" : "sk-ant-..."}
+            className="w-full bg-zinc-800 border border-zinc-700 text-zinc-200 text-sm rounded-lg px-3 py-2 focus:outline-none focus:border-purple-500 placeholder:text-zinc-600"
+          />
+          <p className="text-zinc-600 text-xs mt-1">
+            Get your key at console.anthropic.com. Stored locally in SQLite.
           </p>
         </div>
       </section>

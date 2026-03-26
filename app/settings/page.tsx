@@ -8,6 +8,7 @@ export default function SettingsPage() {
     github_branch: getSetting("github_branch") ?? "main",
     github_solutions_path: getSetting("github_solutions_path") ?? "solutions",
     github_pat_configured: !!getSetting("github_pat"),
+    anthropic_api_key_configured: !!getSetting("anthropic_api_key"),
   };
 
   return (
