@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 import CodeEditor from "@/components/editor/CodeEditor";
 import LanguageSelector from "@/components/editor/LanguageSelector";
 import NotesEditor from "@/components/notes/NotesEditor";
@@ -10,6 +10,7 @@ import { showToast } from "@/components/ui/Toast";
 import InlineChat from "@/components/chat/InlineChat";
 
 type CodeSnippet = { lang: string; langSlug: string; code: string };
+type ReviewState = { next_review: number; interval_days: number; repetitions: number };
 
 type Problem = {
   id: number;
@@ -23,7 +24,7 @@ type Problem = {
   notes: string;
   solutions: Array<{ language: string; code: string }>;
   codeSnippets: CodeSnippet[];
-  review: { next_review: number; interval_days: number } | null;
+  review: ReviewState | null;
 };
 
 type SubmissionResult = {
@@ -40,6 +41,7 @@ type SubmissionResult = {
   full_runtime_error?: string;
   accepted?: boolean;
   autopushStatus?: string;
+  review?: ReviewState | null;
 };
 
 const STARTER: Record<string, string> = {
@@ -55,6 +57,14 @@ const STARTER: Record<string, string> = {
 function getStarter(langSlug: string, snippets: CodeSnippet[]): string {
   const snippet = snippets.find((s) => s.langSlug === langSlug);
   return snippet?.code ?? STARTER[langSlug] ?? "// Start coding here\n";
+}
+
+async function readJson<T>(res: Response): Promise<T | null> {
+  try {
+    return await res.json() as T;
+  } catch {
+    return null;
+  }
 }
 
 const STATUS_COLORS: Record<number, string> = {
@@ -82,6 +92,7 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
   });
   const [notes, setNotes] = useState(problem.notes ?? "");
   const [status, setStatus] = useState(problem.status);
+  const [review, setReview] = useState(problem.review);
   const [saving, setSaving] = useState(false);
 
   // Description lazy loading
@@ -160,11 +171,12 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ language, code }),
       });
-      const data = await res.json();
-      setStatus("solved");
-      if (data.pushStatus === "success") showToast("Saved and pushed to GitHub!", "success");
-      else if (data.pushStatus === "not_configured") showToast("Saved. Configure GitHub in Settings to push.", "info");
-      else showToast("Saved!", "success");
+      const data = await readJson<{ error?: string }>(res);
+      if (!res.ok) {
+        showToast(data?.error ?? "Failed to save.", "error");
+        return;
+      }
+      showToast("Draft saved.", "success");
     } catch {
       showToast("Failed to save.", "error");
     } finally {
@@ -173,31 +185,43 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
   };
 
   const handleSubmit = async () => {
+    if (pollRef.current) clearInterval(pollRef.current);
     setSubmitting(true);
     setSubmitResult(null);
 
-    // Save to DB first so auto-push has the code
-    await fetch(`/api/solutions/${problem.slug}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ language, code }),
-    });
-
     try {
+      const saveRes = await fetch(`/api/solutions/${problem.slug}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ language, code }),
+      });
+      const saveData = await readJson<{ error?: string }>(saveRes);
+
+      if (!saveRes.ok) {
+        showToast(saveData?.error ?? "Failed to save before submitting.", "error");
+        setSubmitting(false);
+        return;
+      }
+
       const res = await fetch(`/api/submit/${problem.slug}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ language, code }),
       });
-      const data = await res.json();
+      const data = await readJson<{ error?: string; submissionId?: number }>(res);
 
       if (!res.ok) {
-        showToast(data.error ?? "Submission failed.", "error");
+        showToast(data?.error ?? "Submission failed.", "error");
         setSubmitting(false);
         return;
       }
 
-      const { submissionId } = data;
+      const submissionId = data?.submissionId;
+      if (!submissionId) {
+        showToast("Submission failed.", "error");
+        setSubmitting(false);
+        return;
+      }
 
       // Poll for result
       let attempts = 0;
@@ -211,7 +235,21 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
         }
 
         const checkRes = await fetch(`/api/submit/${problem.slug}/check/${submissionId}?language=${language}`);
-        const result: SubmissionResult = await checkRes.json();
+        const result = await readJson<SubmissionResult & { error?: string }>(checkRes);
+
+        if (!checkRes.ok) {
+          clearInterval(pollRef.current!);
+          setSubmitting(false);
+          showToast(result?.error ?? "Failed to check submission.", "error");
+          return;
+        }
+
+        if (!result) {
+          clearInterval(pollRef.current!);
+          setSubmitting(false);
+          showToast("Failed to read submission result.", "error");
+          return;
+        }
 
         if (result.state === "SUCCESS" || result.state === "FAILED") {
           clearInterval(pollRef.current!);
@@ -220,6 +258,7 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
 
           if (result.accepted) {
             setStatus("solved");
+            if (result.review) setReview(result.review);
             if (result.autopushStatus === "success") {
               showToast("Accepted! Solution auto-pushed to GitHub.", "success");
             } else {
@@ -237,26 +276,41 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
   const handlePushToGithub = async () => {
     setPushing(true);
     try {
-      const res = await fetch(`/api/solutions/${problem.slug}`, {
+      const res = await fetch(`/api/solutions/${problem.slug}/push`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ language, code }),
       });
-      const data = await res.json();
-      if (data.pushStatus === "success") showToast("Pushed to GitHub!", "success");
-      else if (data.pushStatus === "not_configured") showToast("Configure GitHub in Settings first.", "info");
-      else showToast(`Push failed: ${data.pushError}`, "error");
+      const data = await readJson<{ error?: string; pushStatus?: string; pushError?: string }>(res);
+
+      if (!res.ok) {
+        showToast(data?.error ?? "Push failed.", "error");
+        return;
+      }
+
+      if (data?.pushStatus === "success") {
+        setSubmitResult((current) => current ? { ...current, autopushStatus: "success" } : current);
+        showToast("Pushed to GitHub!", "success");
+      } else if (data?.pushStatus === "not_configured") {
+        showToast("Configure GitHub in Settings first.", "info");
+      } else {
+        showToast(`Push failed: ${data?.pushError ?? "Unknown error"}`, "error");
+      }
     } finally {
       setPushing(false);
     }
   };
 
   const handleMarkAttempted = async () => {
-    await fetch(`/api/problems/${problem.slug}/progress`, {
+    const res = await fetch(`/api/problems/${problem.slug}/progress`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ status: "attempted" }),
     });
+    if (!res.ok) {
+      showToast("Failed to mark attempted.", "error");
+      return;
+    }
     setStatus("attempted");
     showToast("Marked as attempted.", "info");
   };
@@ -267,7 +321,12 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ quality }),
     });
-    const data = await res.json();
+    const data = await readJson<{ error?: string; intervalDays?: number; review?: ReviewState }>(res);
+    if (!res.ok || data?.intervalDays == null || !data.review) {
+      showToast(data?.error ?? "Failed to log review.", "error");
+      return;
+    }
+    setReview(data.review);
     showToast(`Review logged. Next in ${data.intervalDays} day(s).`, "success");
   };
 
@@ -306,7 +365,7 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
               Attempted
             </button>
           )}
-          {problem.review && (
+          {(status === "solved" || review) && (
             <div className="flex items-center gap-1">
               <span className="text-xs text-zinc-500">Review:</span>
               {(["hard", "good", "easy"] as const).map((q) => (
@@ -322,7 +381,10 @@ export default function ProblemWorkspace({ problem }: { problem: Problem }) {
             🤖 AI Tutor
           </button>
           <button onClick={handleSave} disabled={saving} className="text-sm px-3 py-1.5 rounded-lg bg-zinc-700 hover:bg-zinc-600 text-zinc-200 transition-colors disabled:opacity-50">
-            {saving ? "Saving..." : "Save"}
+            {saving ? "Saving..." : "Save Draft"}
+          </button>
+          <button onClick={handlePushToGithub} disabled={pushing} className="text-sm px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors disabled:opacity-50">
+            {pushing ? "Pushing..." : "Push"}
           </button>
           <button onClick={handleSubmit} disabled={submitting} className="text-sm px-4 py-1.5 rounded-lg bg-green-700 hover:bg-green-600 text-white font-medium transition-colors disabled:opacity-50">
             {submitting ? "Submitting..." : "Submit"}

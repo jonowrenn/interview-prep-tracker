@@ -1,6 +1,7 @@
 import { NextRequest } from "next/server";
 import { getSetting, getDb } from "@/lib/db";
 import { pushSolution } from "@/lib/github/push";
+import { markProblemSolved } from "@/lib/problems/progress";
 
 export type SubmissionResult = {
   state: "PENDING" | "STARTED" | "SUCCESS" | "FAILED";
@@ -66,20 +67,7 @@ export async function GET(
         .get(slug) as { id: number; title: string; difficulty: string } | undefined;
 
       if (problem) {
-        const now = Math.floor(Date.now() / 1000);
-        const today = new Date().toISOString().split("T")[0];
-
-        db.prepare(
-          `INSERT INTO user_progress (problem_id, status, solved_at, attempts, updated_at)
-           VALUES (?, 'solved', ?, 1, ?)
-           ON CONFLICT(problem_id) DO UPDATE SET
-             status = 'solved',
-             solved_at = COALESCE(user_progress.solved_at, excluded.solved_at),
-             attempts = user_progress.attempts + 1,
-             updated_at = excluded.updated_at`
-        ).run(problem.id, now, now);
-
-        db.prepare("INSERT INTO activity_log (date, problem_id, action) VALUES (?, ?, 'solved')").run(today, problem.id);
+        const solved = markProblemSolved(problem.id);
 
         // Auto-push if enabled
         const autopush = getSetting("autopush_on_accept") === "true";
@@ -101,7 +89,12 @@ export async function GET(
           pushStatus = pushed.status;
         }
 
-        return Response.json({ ...result, accepted: true, autopushStatus: pushStatus });
+        return Response.json({
+          ...result,
+          accepted: true,
+          autopushStatus: pushStatus,
+          review: solved.review,
+        });
       }
     }
 

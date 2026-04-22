@@ -43,5 +43,13 @@ export async function PUT(
 
   db.prepare("INSERT INTO activity_log (date, problem_id, action) VALUES (?, ?, 'reviewed')").run(today, problem.id);
 
-  return Response.json({ nextReview, intervalDays: result.nextInterval });
+  return Response.json({
+    nextReview,
+    intervalDays: result.nextInterval,
+    review: {
+      next_review: nextReview,
+      interval_days: result.nextInterval,
+      repetitions: result.nextRepetitions,
+    },
+  });
 }

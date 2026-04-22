@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { getDb, getSetting } from "@/lib/db";
+import { recordProblemAttempt } from "@/lib/problems/progress";
 
 // LeetCode language IDs
 const LANG_IDS: Record<string, number> = {
@@ -69,6 +70,8 @@ export async function POST(
     if (!data.submission_id) {
       return Response.json({ error: "No submission ID returned from LeetCode." }, { status: 502 });
     }
+
+    recordProblemAttempt(problem.id);
 
     return Response.json({ submissionId: data.submission_id });
   } catch (err) {
