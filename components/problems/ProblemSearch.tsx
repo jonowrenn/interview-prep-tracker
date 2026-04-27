@@ -8,10 +8,6 @@ export default function ProblemSearch() {
   const searchParams = useSearchParams();
   const [value, setValue] = useState(searchParams.get("q") ?? "");
 
-  useEffect(() => {
-    setValue(searchParams.get("q") ?? "");
-  }, [searchParams]);
-
   const push = useCallback(
     (q: string) => {
       const params = new URLSearchParams(searchParams.toString());

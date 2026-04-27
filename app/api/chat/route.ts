@@ -1,6 +1,8 @@
 import { NextRequest } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import { chatBodySchema } from "@/lib/api/schemas";
 import { getSetting } from "@/lib/db";
+import { parseJsonBody } from "@/lib/api/validation";
 
 const SYSTEM_PROMPT = `You are an expert LeetCode tutor and competitive programming coach. You help users understand and solve LeetCode problems.
 
@@ -15,18 +17,16 @@ Your approach:
 If the user is working on a specific problem, use that context to give targeted help.
 Keep responses concise and focused. Use code blocks when showing code.`;
 
-type Message = { role: "user" | "assistant"; content: string };
-
 export async function POST(req: NextRequest) {
   const apiKey = getSetting("anthropic_api_key");
   if (!apiKey) {
     return Response.json({ error: "Anthropic API key not configured. Add it in Settings." }, { status: 400 });
   }
 
-  const { messages, problemContext } = await req.json() as {
-    messages: Message[];
-    problemContext?: { title: string; difficulty: string; description?: string; slug: string } | null;
-  };
+  const parsed = await parseJsonBody(req, chatBodySchema);
+  if ("response" in parsed) return parsed.response;
+
+  const { messages, problemContext } = parsed.data;
 
   const client = new Anthropic({ apiKey });
 

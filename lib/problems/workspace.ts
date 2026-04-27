@@ -1,4 +1,5 @@
 import { getDb } from "@/lib/db";
+import { sanitizeProblemHtml } from "@/lib/content/sanitize";
 
 type CodeSnippet = { lang: string; langSlug: string; code: string };
 
@@ -71,7 +72,7 @@ export function getProblemWorkspaceData(slug: string): ProblemWorkspaceData | nu
     slug: row.slug,
     title: row.title,
     difficulty: row.difficulty,
-    description: row.description,
+    description: row.description ? sanitizeProblemHtml(row.description) : null,
     descriptionCached: !!row.description,
     tags: JSON.parse(row.tags ?? "[]"),
     status: row.status,

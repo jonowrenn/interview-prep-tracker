@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
 import { getDb } from "@/lib/db";
+import { sanitizeProblemHtml } from "@/lib/content/sanitize";
 import { fetchProblemDetail } from "@/lib/leetcode/client";
 
 export async function GET(
@@ -20,7 +21,7 @@ export async function GET(
   const needsFetch = !row.fetched_at || (now - row.fetched_at) > sevenDays;
 
   if (!needsFetch && row.description) {
-    return Response.json({ description: row.description, codeSnippets: [] });
+    return Response.json({ description: sanitizeProblemHtml(row.description), codeSnippets: [] });
   }
 
   if (row.is_premium) {
@@ -32,12 +33,14 @@ export async function GET(
     return Response.json({ description: row.description ?? "<p class='text-zinc-500'>Could not load description.</p>", codeSnippets: [] });
   }
 
+  const description = sanitizeProblemHtml(detail.content);
+
   db.prepare(
     "UPDATE problems SET description = ?, constraints = ?, fetched_at = ? WHERE slug = ?"
-  ).run(detail.content, detail.constraints ?? null, now, slug);
+  ).run(description, detail.constraints ?? null, now, slug);
 
   return Response.json({
-    description: detail.content,
+    description,
     codeSnippets: detail.codeSnippets ?? [],
   });
 }

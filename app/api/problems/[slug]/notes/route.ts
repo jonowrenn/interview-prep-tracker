@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 import { getDb } from "@/lib/db";
+import { notesBodySchema } from "@/lib/api/schemas";
+import { parseJsonBody } from "@/lib/api/validation";
 
 export async function GET(
   _req: NextRequest,
@@ -19,7 +21,10 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params;
-  const { content } = await req.json() as { content: string };
+  const parsed = await parseJsonBody(req, notesBodySchema);
+  if ("response" in parsed) return parsed.response;
+
+  const { content } = parsed.data;
   const db = getDb();
   const problem = db.prepare("SELECT id FROM problems WHERE slug = ?").get(slug) as { id: number } | undefined;
   if (!problem) return Response.json({ error: "Not found" }, { status: 404 });
@@ -28,7 +33,7 @@ export async function PUT(
   db.prepare(
     `INSERT INTO notes (problem_id, content, updated_at) VALUES (?, ?, ?)
      ON CONFLICT(problem_id) DO UPDATE SET content = excluded.content, updated_at = excluded.updated_at`
-  ).run(problem.id, content ?? "", now);
+  ).run(problem.id, content, now);
 
   return Response.json({ ok: true });
 }

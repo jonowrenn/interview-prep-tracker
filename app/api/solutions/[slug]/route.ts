@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 import { getDb } from "@/lib/db";
+import { solutionBodySchema } from "@/lib/api/schemas";
+import { parseJsonBody } from "@/lib/api/validation";
 import { saveSolution } from "@/lib/problems/progress";
 
 export async function GET(
@@ -23,7 +25,10 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params;
-  const { language, code } = await req.json() as { language: string; code: string };
+  const parsed = await parseJsonBody(req, solutionBodySchema);
+  if ("response" in parsed) return parsed.response;
+
+  const { language, code } = parsed.data;
   const db = getDb();
 
   const problem = db

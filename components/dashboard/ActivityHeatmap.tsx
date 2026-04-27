@@ -8,7 +8,7 @@ export default function ActivityHeatmap({ heatmap }: { heatmap: Entry[] }) {
   // Build 52 weeks of dates ending today
   const today = new Date();
   const weeks: string[][] = [];
-  let current = new Date(today);
+  const current = new Date(today);
   current.setDate(current.getDate() - current.getDay()); // start of current week (Sunday)
   current.setDate(current.getDate() - 51 * 7); // go back 51 more weeks
 

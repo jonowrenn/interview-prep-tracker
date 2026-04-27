@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 import { getDb } from "@/lib/db";
+import { parseJsonBody } from "@/lib/api/validation";
+import { reviewBodySchema } from "@/lib/api/schemas";
 import { sm2, QUALITY } from "@/lib/spaced-repetition/sm2";
 
 export async function PUT(
@@ -7,7 +9,10 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params;
-  const { quality } = await req.json() as { quality: keyof typeof QUALITY };
+  const parsed = await parseJsonBody(req, reviewBodySchema);
+  if ("response" in parsed) return parsed.response;
+
+  const { quality } = parsed.data;
   const db = getDb();
 
   const problem = db.prepare("SELECT id FROM problems WHERE slug = ?").get(slug) as { id: number } | undefined;

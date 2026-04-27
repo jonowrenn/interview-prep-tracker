@@ -54,7 +54,7 @@ export default function ProblemTable({
             </tr>
           </thead>
           <tbody>
-            {problems.map((p, i) => (
+            {problems.map((p) => (
               <tr
                 key={p.id}
                 className="border-b border-zinc-800/50 hover:bg-zinc-800/40 transition-colors"

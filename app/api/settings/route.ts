@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
-import { getDb, setSetting, getSetting } from "@/lib/db";
+import { setSetting, getSetting } from "@/lib/db";
+import { settingsBodySchema } from "@/lib/api/schemas";
+import { parseJsonBody } from "@/lib/api/validation";
 
 export async function GET() {
   return Response.json({
@@ -12,12 +14,14 @@ export async function GET() {
 }
 
 export async function PUT(req: NextRequest) {
-  const body = await req.json() as Record<string, string>;
+  const parsed = await parseJsonBody(req, settingsBodySchema);
+  if ("response" in parsed) return parsed.response;
 
   const allowed = ["github_pat", "github_owner", "github_repo", "github_branch", "github_solutions_path", "anthropic_api_key", "leetcode_session", "autopush_on_accept"];
   for (const key of allowed) {
-    if (body[key] !== undefined) {
-      setSetting(key, body[key]);
+    const value = parsed.data[key as keyof typeof parsed.data];
+    if (value !== undefined) {
+      setSetting(key, value);
     }
   }
 

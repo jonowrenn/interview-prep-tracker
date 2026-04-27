@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 import { getDb, getSetting } from "@/lib/db";
+import { parseJsonBody } from "@/lib/api/validation";
+import { solutionBodySchema } from "@/lib/api/schemas";
 import { recordProblemAttempt } from "@/lib/problems/progress";
 
 // LeetCode language IDs
@@ -24,7 +26,10 @@ export async function POST(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params;
-  const { language, code } = await req.json() as { language: string; code: string };
+  const parsed = await parseJsonBody(req, solutionBodySchema);
+  if ("response" in parsed) return parsed.response;
+
+  const { language, code } = parsed.data;
 
   const session = getSetting("leetcode_session");
   if (!session) {

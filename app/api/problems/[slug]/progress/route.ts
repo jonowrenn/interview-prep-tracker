@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 import { getDb } from "@/lib/db";
+import { parseJsonBody } from "@/lib/api/validation";
+import { progressBodySchema } from "@/lib/api/schemas";
 import { markProblemSolved, recordProblemAttempt } from "@/lib/problems/progress";
 
 export async function PUT(
@@ -7,7 +9,10 @@ export async function PUT(
   { params }: { params: Promise<{ slug: string }> }
 ) {
   const { slug } = await params;
-  const { status } = await req.json() as { status: "unsolved" | "attempted" | "solved" };
+  const parsed = await parseJsonBody(req, progressBodySchema);
+  if ("response" in parsed) return parsed.response;
+
+  const { status } = parsed.data;
   const db = getDb();
 
   const problem = db.prepare("SELECT id FROM problems WHERE slug = ?").get(slug) as { id: number } | undefined;
